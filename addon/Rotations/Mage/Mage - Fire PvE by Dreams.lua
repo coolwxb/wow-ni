@@ -24,11 +24,34 @@ local items = {
 	},
 	{
 		type = "entry",
+		text = "Mark Target Skull",
+		tooltip = "Mark current attack target as Skull.",
+		enabled = false,
+		key = "MarkSkull"
+	},
+	{
+		type = "entry",
 		text = "\124T"..select(3, GetSpellInfo(45438))..":26:26\124t Ice Block < HP%",
 		tooltip = "Emergency cast when HP falls below this value.",
 		enabled = true,
 		value = 15,
 		key = "IceBlock"
+	},
+	{
+		type = "entry",
+		text = "\124T"..GetItemIcon(36194)..":26:26\124t Fel Healthstone < HP%",
+		tooltip = "Use Fel Healthstone when HP falls below this value.",
+		enabled = true,
+		value = 35,
+		key = "FelHealthstone"
+	},
+	{
+		type = "entry",
+		text = "\124T"..GetItemIcon(33447)..":26:26\124t Runic Healing Potion < HP%",
+		tooltip = "Use Runic Healing Potion when HP falls below this value.",
+		enabled = true,
+		value = 30,
+		key = "RunicHealingPotion"
 	},
 	{
 		type = "entry",
@@ -71,7 +94,9 @@ local items = {
 		key = "FrostNova"
 	},
 	{ type = "entry", text = "\124T"..select(3, GetSpellInfo(12051))..":26:26\124t Use Evocation < MP%", tooltip = "Use Evocation < MP%", enabled = true, value = 10, key = "Evocation" },
+	{ type = "entry", text = "\124T"..GetItemIcon(33448)..":26:26\124t Runic Mana Potion < MP%", tooltip = "Use Runic Mana Potion when MP falls below this value.", enabled = true, value = 20, key = "RunicManaPotion" },
 	{ type = "entry", text = "\124T"..select(3, GetSpellInfo(55342))..":26:26\124t Use Mirror Image", tooltip = "Use Mirror Image", enabled = true, key = "MirrorImage" },
+	{ type = "entry", text = "\124T"..select(3, GetSpellInfo(12472))..":26:26\124t Use Icy Veins", tooltip = "Use Icy Veins", enabled = true, key = "IcyVeins" },
 	{ type = "entry", text = "\124T"..select(3, GetSpellInfo(11129))..":26:26\124t Use Combustion", tooltip = "Use Combustion", enabled = true, key = "Combustion" },
 	{ type = "entry", text = "\124T"..select(3, GetSpellInfo(42859))..":26:26\124t Use Scorch", tooltip = "Use Scorch", enabled = true, key = "Scorch" },
 	{ type = "entry", text = "\124T"..select(3, GetSpellInfo(42873))..":26:26\124t Use Fireblast while moving", tooltip = "Use Fireblast", enabled = true, key = "Fireblast" },
@@ -123,6 +148,7 @@ local spells = {
 	Scorch = {id = 42859, name = GetSpellInfo(42859)},
 	LivingBomb = ResolveSpell({55360, 44457}),
 	MirrorImage = {id = 55342, name = GetSpellInfo(55342)},
+	IcyVeins = {id = 12472, name = GetSpellInfo(12472)},
 	Combustion = {id = 11129, name = GetSpellInfo(11129)},
 	Fireblast = {id = 42873, name = GetSpellInfo(42873)},
 	Fireball = {id = 42833, name = GetSpellInfo(42833)},
@@ -148,15 +174,19 @@ end
 local queue = {
     "Molten Armor",
     "Arcane Brilliance",
+	"Target Switch",
+	"Skull Mark",
 	"Defensive",
 	"Conjure Mana Gem",
 	"Mana Gem",
+	"Runic Mana Potion",
 	"Fireblast",
     "Evocation",
     "Pyroblast",
     "Living Bomb",
     "Scorch",
 	"Mirror Image",
+	"Icy Veins",
     "Combustion",
     "Fireball"
 };
@@ -184,7 +214,14 @@ local function castLivingBombAtMissingTarget(range)
 		if enemies[i] ~= nil and enemies[i].guid ~= nil then
 			local guid = enemies[i].guid;
 			if ni.unit.debuff(guid, spells.LivingBomb.id, "player") == nil then
-				ni.spell.cast(spells.LivingBomb.name, guid);
+				if UnitGUID("target") ~= guid then
+					ni.player.runtext("/cleartarget");
+					ni.player.target(guid);
+				end
+				if not ni.unit.isfacing("player", "target", 90) then
+					ni.player.lookat("target");
+				end
+				ni.spell.cast(spells.LivingBomb.name, "target");
 				return true;
 			end
 		end
@@ -194,6 +231,54 @@ end
 
 local function isBossOrElite(unit)
 	return ni.unit.isboss(unit) or (ni.unit.iselite ~= nil and ni.unit.iselite(unit));
+end
+
+local function hasAttackableTarget(unit)
+	unit = unit or "target";
+	if not UnitExists(unit) or UnitIsDeadOrGhost(unit) then
+		return false;
+	end
+	if not UnitCanAttack("player", unit) then
+		return false;
+	end
+	if ni.unit.isimmune ~= nil and ni.unit.isimmune(unit) then
+		return false;
+	end
+	return true;
+end
+
+local function switchTarget(unit)
+	if not hasAttackableTarget(unit) then
+		return false;
+	end
+	local guid = UnitGUID(unit);
+	if guid == nil then
+		return false;
+	end
+	if UnitGUID("target") ~= guid then
+		ni.player.runtext("/cleartarget");
+		ni.player.target(guid);
+	end
+	if not ni.unit.isfacing("player", "target", 90) then
+		ni.player.lookat("target");
+	end
+	return true;
+end
+
+local function switchToTankTarget()
+	if switchTarget("targettarget") then
+		return true;
+	end
+	if switchTarget("focustarget") then
+		return true;
+	end
+	if ni.tanks ~= nil then
+		local mainTank = ni.tanks();
+		if mainTank ~= nil and mainTank.unit ~= nil and switchTarget(mainTank.unit .. "target") then
+			return true;
+		end
+	end
+	return false;
 end
 
 local function playerHP()
@@ -227,6 +312,25 @@ local abilities = {
 		end
 	end, 
 
+	["Target Switch"] = function()
+		if UnitAffectingCombat("player") and not UnitExists("target") then
+			return switchToTankTarget();
+		end
+		if UnitExists("target") and UnitIsDeadOrGhost("target") then
+			return switchToTankTarget();
+		end
+	end,
+
+	["Skull Mark"] = function()
+	local _, enabled = GetSetting("MarkSkull")
+		if enabled == true
+			and hasAttackableTarget("target")
+			and GetRaidTargetIndex("target") ~= 8 then
+				SetRaidTarget("target", 8)
+				return true;
+		end
+	end,
+
 	["Defensive"] = function()
 		if not UnitAffectingCombat("player") then
 			return;
@@ -235,6 +339,26 @@ local abilities = {
 			return;
 		end
 		local hp = playerHP();
+
+		local thresholdFelHealthstone, enabledFelHealthstone = GetSetting("FelHealthstone");
+		if enabledFelHealthstone == true
+			and thresholdFelHealthstone ~= nil
+			and hp <= tonumber(thresholdFelHealthstone)
+			and ni.player.hasitem(36194)
+			and ni.player.itemcd(36194) < 1 then
+				ni.player.useitem(36194)
+				return true;
+		end
+
+		local thresholdRunicHealingPotion, enabledRunicHealingPotion = GetSetting("RunicHealingPotion");
+		if enabledRunicHealingPotion == true
+			and thresholdRunicHealingPotion ~= nil
+			and hp <= tonumber(thresholdRunicHealingPotion)
+			and ni.player.hasitem(33447)
+			and ni.player.itemcd(33447) < 1 then
+				ni.player.useitem(33447)
+				return true;
+		end
 
 		local thresholdIceBlock, enabledIceBlock = GetSetting("IceBlock");
 		if enabledIceBlock == true
@@ -339,6 +463,19 @@ local abilities = {
 		end
 	end,
 
+	["Runic Mana Potion"] = function()
+	local value, enabled = GetSetting("RunicManaPotion")
+		if enabled
+			and UnitAffectingCombat("player")
+			and ni.player.power() <= value
+			and not ni.unit.ischanneling("player")
+			and ni.player.hasitem(33448)
+			and ni.player.itemcd(33448) < 1 then
+				ni.player.useitem(33448)
+				return true;
+		end
+	end,
+
 	["Evocation"] = function()
 	local value, enabled = GetSetting("Evocation")
 		if enabled
@@ -353,7 +490,7 @@ local abilities = {
 
 	["Pyroblast"] = function()
 		if ni.spell.available(spells.Pyroblast.id)
-			and UnitAffectingCombat("player")
+			and hasAttackableTarget("target")
 			and (ni.unit.buff("player", 48108, "player") or ni.unit.aura("player", 48108)) -- Hot Streak --
 			and not ni.unit.ischanneling("player") then
 				ni.spell.cast(spells.Pyroblast.name, "target")
@@ -365,7 +502,7 @@ local abilities = {
 	local _, enabled = GetSetting("Scorch")
 		if enabled 
 			and ni.spell.available(spells.Scorch.id)
-			and UnitAffectingCombat("player")
+			and hasAttackableTarget("target")
 			and not useAoe()
 			and ni.unit.isboss("target")
 			and ni.unit.debuff("target", 22959, "player") == nil -- Improved Scorch --
@@ -380,13 +517,13 @@ local abilities = {
 		local aoeMode = useAoe();
 
 		if ni.spell.available(spells.LivingBomb.id)
-			and UnitAffectingCombat("player")
+			and hasAttackableTarget("target")
 			and aoeMode
 			and not ni.unit.ischanneling("player") then
 				return castLivingBombAtMissingTarget(10);
 		end
 		if ni.spell.available(spells.LivingBomb.id)
-			and UnitAffectingCombat("player")
+			and hasAttackableTarget("target")
 			and ni.unit.debuff("target", spells.LivingBomb.id, "player") == nil
 			and not ni.unit.ischanneling("player") then
 				ni.spell.cast(spells.LivingBomb.name, "target")
@@ -398,10 +535,22 @@ local abilities = {
 	local _, enabled = GetSetting("MirrorImage")
 		if enabled
 			and isBossOrElite("target")
-			and UnitAffectingCombat("player")
+			and hasAttackableTarget("target")
 			and ni.spell.available(spells.MirrorImage.id)  
 			and not ni.unit.ischanneling("player") then
 				ni.spell.cast(spells.MirrorImage.name, "player")
+				return true;
+		end
+	end,
+
+	["Icy Veins"] = function()
+	local _, enabled = GetSetting("IcyVeins")
+		if enabled
+			and isBossOrElite("target")
+			and hasAttackableTarget("target")
+			and ni.spell.available(spells.IcyVeins.id)
+			and not ni.unit.ischanneling("player") then
+				ni.spell.cast(spells.IcyVeins.name, "player")
 				return true;
 		end
 	end,
@@ -410,7 +559,7 @@ local abilities = {
 	local _, enabled = GetSetting("Combustion")
 		if enabled
 			and isBossOrElite("target")
-			and UnitAffectingCombat("player")
+			and hasAttackableTarget("target")
 			and ni.spell.available(spells.Combustion.id)  
 			and not ni.unit.ischanneling("player") then
 				ni.spell.cast(spells.Combustion.name, "player")
@@ -420,7 +569,7 @@ local abilities = {
 
 	["Fireblast"] = function()
 	if ni.spell.available(spells.Fireblast.id) 
-			and UnitAffectingCombat("player")
+			and hasAttackableTarget("target")
 			and not ni.unit.ischanneling("player") 
 			and ni.unit.ismoving("player") then
 				ni.spell.cast(spells.Fireblast.name, "target")
@@ -430,7 +579,7 @@ local abilities = {
 
 	["Fireball"] = function()
 	if ni.spell.available(spells.Fireball.id) 
-			and UnitAffectingCombat("player")
+			and hasAttackableTarget("target")
 			and not ni.unit.ischanneling("player") then
 				ni.spell.cast(spells.Fireball.name, "target")
 				return true;
