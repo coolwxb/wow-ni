@@ -1,0 +1,3 @@
+DLL_PROCESS_ATTACH: wow.exe Module Handle: 00400000
+CreateFileA Proc Address: 7520E9F0
+ReadFile Proc Address: 7520EDC0
