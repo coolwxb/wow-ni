@@ -241,9 +241,6 @@ local function hasAttackableTarget(unit)
 	if not UnitCanAttack("player", unit) then
 		return false;
 	end
-	if ni.unit.isimmune ~= nil and ni.unit.isimmune(unit) then
-		return false;
-	end
 	return true;
 end
 
